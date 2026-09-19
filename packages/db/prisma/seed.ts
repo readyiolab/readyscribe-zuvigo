@@ -1,4 +1,51 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { PrismaClient, PlanCode, WorkspaceRole, SubscriptionStatus } from "@prisma/client";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function loadEnvFile() {
+  const candidates = [
+    path.resolve(process.cwd(), ".env"),
+    path.resolve(process.cwd(), "../../.env"),
+    path.resolve(__dirname, "../.env"),
+    path.resolve(__dirname, "../../.env"),
+    path.resolve(__dirname, "../../../.env"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      const content = fs.readFileSync(p, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx > 0) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          let val = trimmed.slice(eqIdx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.slice(1, -1);
+          }
+          if (!process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    }
+  }
+
+  if (!process.env.DATABASE_URL && process.env.DB_HOST && process.env.DB_USER && process.env.DB_NAME) {
+    const port = process.env.DB_PORT || "3306";
+    const pass = process.env.DB_PASS ? `:${encodeURIComponent(process.env.DB_PASS)}` : "";
+    const user = encodeURIComponent(process.env.DB_USER);
+    const host = process.env.DB_HOST;
+    const dbName = process.env.DB_NAME;
+    process.env.DATABASE_URL = `mysql://${user}${pass}@${host}:${port}/${dbName}`;
+  }
+}
+
+loadEnvFile();
 
 const prisma = new PrismaClient();
 
