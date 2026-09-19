@@ -15,11 +15,11 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "generate": "prisma generate",
-    "migrate:dev": "prisma migrate dev",
-    "migrate:deploy": "prisma migrate deploy",
-    "seed": "tsx prisma/seed.ts",
-    "studio": "prisma studio",
+    "generate": "dotenv -e ../../.env -e .env -- prisma generate",
+    "migrate:dev": "dotenv -e ../../.env -e .env -- prisma migrate dev",
+    "migrate:deploy": "dotenv -e ../../.env -e .env -- prisma migrate deploy",
+    "seed": "dotenv -e ../../.env -e .env -- tsx prisma/seed.ts",
+    "studio": "dotenv -e ../../.env -e .env -- prisma studio",
     "clean": "rimraf dist"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^20",
+    "dotenv-cli": "^11.0.0",
     "prisma": "^6.10.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
