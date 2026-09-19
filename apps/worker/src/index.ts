@@ -424,23 +424,23 @@ function wrap(
 
 const workers = [
   new Worker(QUEUE_NAMES.CAPTURE_PROCESSING, wrap(QUEUE_NAMES.CAPTURE_PROCESSING, processCapture), {
-    connection,
+    connection: createRedisConnection(config.REDIS_URL),
     concurrency: 2,
   }),
   new Worker(QUEUE_NAMES.SCREENSHOT_PROCESSING, wrap(QUEUE_NAMES.SCREENSHOT_PROCESSING, processScreenshot), {
-    connection,
+    connection: createRedisConnection(config.REDIS_URL),
     concurrency: 4,
   }),
   new Worker(QUEUE_NAMES.AI_PROCESSING, wrap(QUEUE_NAMES.AI_PROCESSING, processAI), {
-    connection,
+    connection: createRedisConnection(config.REDIS_URL),
     concurrency: 2,
   }),
   new Worker(QUEUE_NAMES.EMAIL, wrap(QUEUE_NAMES.EMAIL, processEmail), {
-    connection,
+    connection: createRedisConnection(config.REDIS_URL),
     concurrency: 2,
   }),
   new Worker(QUEUE_NAMES.HEALTH, wrap(QUEUE_NAMES.HEALTH, processHealth), {
-    connection,
+    connection: createRedisConnection(config.REDIS_URL),
     concurrency: 1,
   }),
 ];
