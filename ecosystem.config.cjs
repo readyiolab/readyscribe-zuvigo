@@ -1,25 +1,28 @@
+const path = require("path");
+
 module.exports = {
   apps: [
     {
       name: "zuvigo-web",
-      script: "pnpm",
-      args: "--filter @zuvigo/web start",
-      cwd: __dirname,
+      cwd: path.join(__dirname, "apps/web"),
+      script: "node_modules/next/dist/bin/next",
+      args: "start -p 3050",
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       max_memory_restart: "1G",
       env: {
         NODE_ENV: "production",
-        PORT: 3000,
+        PORT: 3050,
       },
     },
     {
       name: "zuvigo-worker",
-      script: "pnpm",
-      args: "--filter @zuvigo/worker start",
-      cwd: __dirname,
+      cwd: path.join(__dirname, "apps/worker"),
+      script: "dist/index.js",
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       max_memory_restart: "1G",
