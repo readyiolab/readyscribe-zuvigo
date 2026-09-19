@@ -325,8 +325,21 @@ async function clearBufferedIds(ids: string[]) {
   });
 }
 
+let isFlushing = false;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleBackgroundFlush(delayMs = 350) {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushEvents().catch(() => {});
+  }, delayMs);
+}
+
 async function flushEvents() {
+  if (isFlushing) return;
   if (!state.captureSessionId || state.uploadQueue.length === 0) return;
+  isFlushing = true;
   // Pin session id so a concurrent loadState/start cannot redirect this batch.
   const sessionId = state.captureSessionId;
   const batch = state.uploadQueue.splice(0, 50);
@@ -334,10 +347,10 @@ async function flushEvents() {
     events: batch.map(({ screenshotDataUrl: _, ...rest }) => rest),
   };
   try {
-    for (const ev of batch) {
-      if (!ev.screenshotDataUrl || !ev.assetClientId) continue;
-      await uploadScreenshotForSession(sessionId, ev);
-    }
+    const screenshotTasks = batch
+      .filter((ev) => ev.screenshotDataUrl && ev.assetClientId)
+      .map((ev) => uploadScreenshotForSession(sessionId, ev));
+    await Promise.all(screenshotTasks);
     await api(`/api/v1/captures/${sessionId}/events`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -363,6 +376,11 @@ async function flushEvents() {
     state.lastError = msg;
     await persistState();
     throw err;
+  } finally {
+    isFlushing = false;
+    if (state.uploadQueue.length > 0) {
+      scheduleBackgroundFlush(200);
+    }
   }
 }
 
@@ -443,8 +461,8 @@ async function captureRecordedTab(): Promise<string | null> {
   }
 
   return chrome.tabs.captureVisibleTab(tab.windowId, {
-    format: "png",
-    quality: 80,
+    format: "jpeg",
+    quality: 85,
   });
 }
 
@@ -470,9 +488,7 @@ async function enqueueEvent(ev: BufferedEvent, needsScreenshot: boolean) {
   }
   state.uploadQueue.push({ ...ev });
   await bufferEvent(ev);
-  if (state.uploadQueue.length >= 10) {
-    await flushEvents().catch(() => {});
-  }
+  scheduleBackgroundFlush(300);
   await persistState();
   broadcast();
 }
@@ -723,20 +739,29 @@ async function stopCapture() {
       await new Promise((r) => setTimeout(r, 100));
     }
 
-    while (state.uploadQueue.length) {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+    while (state.uploadQueue.length || isFlushing) {
       await flushEvents();
+      if (isFlushing) await new Promise((r) => setTimeout(r, 40));
     }
     const buffered = await readBuffered();
     if (buffered.length) {
       state.uploadQueue.push(...buffered);
-      await flushEvents();
+      while (state.uploadQueue.length || isFlushing) {
+        await flushEvents();
+        if (isFlushing) await new Promise((r) => setTimeout(r, 40));
+      }
       await clearBuffered();
     }
 
     // Brief grace for late content events already in the SW message queue
-    await new Promise((r) => setTimeout(r, 250));
-    while (state.uploadQueue.length) {
+    await new Promise((r) => setTimeout(r, 100));
+    while (state.uploadQueue.length || isFlushing) {
       await flushEvents();
+      if (isFlushing) await new Promise((r) => setTimeout(r, 40));
     }
 
     await api(`/api/v1/captures/${state.captureSessionId}/complete`, {
@@ -747,34 +772,24 @@ async function stopCapture() {
     await persistState();
     broadcast();
 
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      const status = await api(`/api/v1/captures/${state.captureSessionId}`);
-      if (status.documentId) {
-        state.documentId = status.documentId;
-        state.status =
-          status.status === "FAILED"
-            ? "failed"
-            : status.status === "COMPLETED"
-              ? "completed"
-              : "processing";
-        await persistState();
-        broadcast();
-        await chrome.tabs.create({
-          url: `${state.apiBase}/scribes/${status.documentId}`,
-        });
-        if (status.status === "COMPLETED" || status.status === "FAILED") {
-          state.status = status.status === "FAILED" ? "failed" : "completed";
-          await persistState();
-          broadcast();
-        } else {
+    for (let i = 0; i < 120; i++) {
+      try {
+        const status = await api(`/api/v1/captures/${state.captureSessionId}`);
+        if (status.documentId) {
+          state.documentId = status.documentId;
           state.status = "completed";
           await persistState();
           broadcast();
+          await chrome.tabs.create({
+            url: `${state.apiBase}/scribes/${status.documentId}`,
+          });
+          return;
         }
-        return;
+      } catch {
+        // network retry
       }
       broadcast();
+      await new Promise((r) => setTimeout(r, 300));
     }
     state.status = "failed";
     state.lastError =

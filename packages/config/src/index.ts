@@ -157,7 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         data.SPACES_SECRET_KEY,
     ),
     googleOAuthEnabled: Boolean(data.GOOGLE_CLIENT_ID && data.GOOGLE_CLIENT_SECRET),
-    aiEnabled: Boolean(data.AI_API_KEY),
+    aiEnabled: Boolean(data.AI_API_KEY && !data.AI_API_KEY.includes("your_openai")),
     smtpEnabled: Boolean(data.SMTP_HOST && data.SMTP_USER && data.SMTP_PASS),
     upstashEnabled: Boolean(data.UPSTASH_REDIS_REST_URL && data.UPSTASH_REDIS_REST_TOKEN),
   };

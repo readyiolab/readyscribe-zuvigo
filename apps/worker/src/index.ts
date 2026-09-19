@@ -279,6 +279,25 @@ async function processAI(job: Job<JobPayload>) {
   });
   if (!scribe) throw new Error("Scribe not found");
 
+  // If AI is disabled or no valid key, complete immediately with heuristic steps
+  if (!config.aiEnabled) {
+    await prisma.document.update({
+      where: { id: scribe.documentId },
+      data: {
+        status: DocumentStatus.READY,
+        processingStage: null,
+      },
+    });
+    if (scribe.captureSessionId) {
+      await prisma.captureSession.update({
+        where: { id: scribe.captureSessionId },
+        data: { status: CaptureSessionStatus.COMPLETED },
+      });
+    }
+    await markJob(job.id!, "COMPLETED");
+    return;
+  }
+
   // Idempotent: skip if aiRevision already applied for this job attempt path
   await prisma.document.update({
     where: { id: scribe.documentId },
