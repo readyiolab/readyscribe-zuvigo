@@ -1,0 +1,30 @@
+{
+  "name": "@zuvigo/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@zuvigo/ai": "workspace:*",
+    "@zuvigo/capture": "workspace:*",
+    "@zuvigo/config": "workspace:*",
+    "@zuvigo/db": "workspace:*",
+    "@zuvigo/email": "workspace:*",
+    "@zuvigo/logger": "workspace:*",
+    "@zuvigo/queue": "workspace:*",
+    "@zuvigo/storage": "workspace:*",
+    "@zuvigo/types": "workspace:*",
+    "bullmq": "^5.56.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

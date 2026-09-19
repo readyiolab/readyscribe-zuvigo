@@ -1,0 +1,37 @@
+{
+  "name": "@zuvigo/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@zuvigo/capture": "workspace:*",
+    "@zuvigo/db": "workspace:*",
+    "@zuvigo/logger": "workspace:*",
+    "@zuvigo/queue": "workspace:*",
+    "@zuvigo/security": "workspace:*",
+    "@zuvigo/storage": "workspace:*",
+    "@zuvigo/types": "workspace:*",
+    "bullmq": "^5.56.0",
+    "nanoid": "^5.1.5",
+    "pdfkit": "^0.20.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pdfkit": "^0.17.6",
+    "typescript": "^5.8.3"
+  }
+}

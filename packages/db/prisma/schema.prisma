@@ -1,0 +1,740 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth (Better Auth compatible) ───────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?   @db.VarChar(255)
+  email         String    @unique @db.VarChar(255)
+  emailVerified Boolean   @default(false)
+  image         String?   @db.VarChar(2048)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  sessions          Session[]
+  accounts          Account[]
+  ownedWorkspaces   Workspace[]       @relation("WorkspaceOwner")
+  memberships       WorkspaceMember[]
+  createdDocuments  Document[]        @relation("DocumentCreator")
+  captureSessions   CaptureSession[]
+  favorites         DocumentFavorite[]
+  documentViews     DocumentView[]
+  comments          Comment[]
+  auditLogs         AuditLog[]        @relation("AuditActor")
+  documentVersions  DocumentVersion[]
+  shareLinks        ShareLink[]
+  documentPermissions DocumentPermission[]
+  folders           Folder[]
+  extensionTokens   ExtensionToken[]
+  workspaceInvitesSent WorkspaceInvite[] @relation("WorkspaceInviteSender")
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique @db.VarChar(255)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?  @db.VarChar(64)
+  userAgent String?  @db.VarChar(512)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String    @db.VarChar(255)
+  providerId            String    @db.VarChar(100)
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  idToken               String?   @db.Text
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?   @db.VarChar(512)
+  password              String?   @db.VarChar(255)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([providerId, accountId])
+  @@map("accounts")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String   @db.VarChar(255)
+  value      String   @db.VarChar(255)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verifications")
+}
+
+model ExtensionToken {
+  id        String    @id @default(cuid())
+  token     String    @unique @db.VarChar(64)
+  userId    String
+  label     String?   @db.VarChar(100)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("extension_tokens")
+}
+
+model ExtensionHandoff {
+  id        String   @id @db.VarChar(64)
+  userId    String?
+  token     String?  @db.VarChar(64)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("extension_handoffs")
+}
+
+// ─── Workspaces ──────────────────────────────────────────────────────────────
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  EDITOR
+  MEMBER
+  VIEWER
+}
+
+model Workspace {
+  id          String    @id @default(cuid())
+  name        String    @db.VarChar(100)
+  slug        String    @unique @db.VarChar(50)
+  ownerUserId String
+  settings    Json?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  owner             User               @relation("WorkspaceOwner", fields: [ownerUserId], references: [id])
+  members           WorkspaceMember[]
+  invites           WorkspaceInvite[]
+  documents         Document[]
+  folders           Folder[]
+  tags              Tag[]
+  captureSessions   CaptureSession[]
+  captureAssets     CaptureAsset[]
+  auditLogs         AuditLog[]
+  analyticsEvents   AnalyticsEvent[]
+  subscription      Subscription?
+  usageCounters     UsageCounter[]
+  usageRecords      UsageRecord[]
+
+  @@index([ownerUserId])
+  @@index([deletedAt])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId, workspaceId])
+  @@map("workspace_members")
+}
+
+model WorkspaceInvite {
+  id              String        @id @default(cuid())
+  workspaceId     String
+  email           String        @db.VarChar(255)
+  role            WorkspaceRole @default(EDITOR)
+  token           String        @unique @db.VarChar(64)
+  invitedByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User      @relation("WorkspaceInviteSender", fields: [invitedByUserId], references: [id])
+
+  @@index([workspaceId, email])
+  @@index([token, revokedAt])
+  @@map("workspace_invites")
+}
+
+// ─── Content organization ────────────────────────────────────────────────────
+
+model Folder {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  parentId        String?
+  name            String    @db.VarChar(200)
+  createdByUserId String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parent    Folder?   @relation("FolderTree", fields: [parentId], references: [id])
+  children  Folder[]  @relation("FolderTree")
+  creator   User      @relation(fields: [createdByUserId], references: [id])
+  documents Document[]
+
+  @@index([workspaceId, deletedAt])
+  @@index([workspaceId, parentId])
+  @@map("folders")
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String   @db.VarChar(100)
+  color       String?  @db.VarChar(20)
+  createdAt   DateTime @default(now())
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  documentTags DocumentTag[]
+
+  @@unique([workspaceId, name])
+  @@map("tags")
+}
+
+model DocumentTag {
+  documentId String
+  tagId      String
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([documentId, tagId])
+  @@map("document_tags")
+}
+
+// ─── Documents ───────────────────────────────────────────────────────────────
+
+enum DocumentKind {
+  SCRIBE
+  PAGE
+}
+
+enum DocumentStatus {
+  DRAFT
+  PROCESSING
+  READY
+  FAILED
+  ARCHIVED
+}
+
+model Document {
+  id              String         @id @default(cuid())
+  workspaceId     String
+  folderId        String?
+  createdByUserId String
+  kind            DocumentKind
+  status          DocumentStatus @default(DRAFT)
+  title           String         @db.VarChar(200)
+  summary         String?        @db.Text
+  processingStage String?        @db.VarChar(50)
+  processingError String?        @db.Text
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  deletedAt       DateTime?
+
+  workspace   Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder      Folder?              @relation(fields: [folderId], references: [id])
+  creator     User                 @relation("DocumentCreator", fields: [createdByUserId], references: [id])
+  scribe      Scribe?
+  page        Page?
+  versions    DocumentVersion[]
+  shareLinks  ShareLink[]
+  permissions DocumentPermission[]
+  favorites   DocumentFavorite[]
+  views       DocumentView[]
+  comments    Comment[]
+  tags        DocumentTag[]
+  captureSessions CaptureSession[]
+
+  @@index([workspaceId, deletedAt, updatedAt])
+  @@index([workspaceId, createdByUserId, deletedAt])
+  @@index([workspaceId, kind, deletedAt])
+  @@index([folderId])
+  @@map("documents")
+}
+
+model DocumentFavorite {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String
+  createdAt  DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([userId, createdAt])
+  @@map("document_favorites")
+}
+
+model DocumentView {
+  id         String   @id @default(cuid())
+  documentId String
+  userId     String
+  viewedAt   DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@index([userId, viewedAt])
+  @@map("document_views")
+}
+
+model DocumentVersion {
+  id              String   @id @default(cuid())
+  documentId      String
+  versionNumber   Int
+  snapshot        Json
+  createdByUserId String
+  createdAt       DateTime @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User     @relation(fields: [createdByUserId], references: [id])
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId, createdAt])
+  @@map("document_versions")
+}
+
+model DocumentPermission {
+  id         String        @id @default(cuid())
+  documentId String
+  userId     String
+  role       WorkspaceRole
+  createdAt  DateTime      @default(now())
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, userId])
+  @@map("document_permissions")
+}
+
+model Comment {
+  id         String    @id @default(cuid())
+  documentId String
+  stepId     String?
+  authorUserId String
+  body       String    @db.Text
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  deletedAt  DateTime?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  author   User     @relation(fields: [authorUserId], references: [id])
+
+  @@index([documentId, createdAt])
+  @@map("comments")
+}
+
+// ─── Scribes & Pages ─────────────────────────────────────────────────────────
+
+model Scribe {
+  id               String   @id @default(cuid())
+  documentId       String   @unique
+  captureSessionId String?  @unique
+  metadata         Json?
+  aiRevision       Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  document       Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  captureSession CaptureSession? @relation(fields: [captureSessionId], references: [id])
+  steps          ScribeStep[]
+
+  @@map("scribes")
+}
+
+model ScribeStep {
+  id          String   @id @default(cuid())
+  scribeId    String
+  position    Int
+  title       String   @db.VarChar(200)
+  description String   @db.Text
+  callouts    Json?
+  annotations Json?
+  assetId     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  scribe Scribe        @relation(fields: [scribeId], references: [id], onDelete: Cascade)
+  asset  CaptureAsset? @relation(fields: [assetId], references: [id])
+
+  @@index([scribeId, position])
+  @@index([assetId])
+  @@map("scribe_steps")
+}
+
+model Page {
+  id         String   @id @default(cuid())
+  documentId String   @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  document Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  blocks   PageBlock[]
+
+  @@map("pages")
+}
+
+enum PageBlockType {
+  TEXT
+  HEADING
+  IMAGE
+  VIDEO
+  SCRIBE
+  TABLE
+  CALLOUT
+  QUOTE
+  CODE
+  DIVIDER
+  LINK
+}
+
+model PageBlock {
+  id        String        @id @default(cuid())
+  pageId    String
+  position  Int
+  type      PageBlockType
+  data      Json
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, position])
+  @@map("page_blocks")
+}
+
+// ─── Capture ─────────────────────────────────────────────────────────────────
+
+enum CaptureSessionStatus {
+  STARTING
+  CAPTURING
+  PAUSED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum CaptureClientType {
+  BROWSER_EXTENSION
+  DESKTOP_APP
+  MANUAL
+  FUTURE_MOBILE
+}
+
+model CaptureSession {
+  id             String               @id @default(cuid())
+  workspaceId    String
+  userId         String
+  documentId     String?
+  status         CaptureSessionStatus @default(STARTING)
+  clientType     CaptureClientType    @default(BROWSER_EXTENSION)
+  browser        String?              @db.VarChar(100)
+  browserVersion String?              @db.VarChar(50)
+  sourceUrl      String?              @db.VarChar(2048)
+  metadata       Json?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  workspace Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id])
+  document  Document?      @relation(fields: [documentId], references: [id])
+  events    CaptureEvent[]
+  assets    CaptureAsset[]
+  scribe    Scribe?
+
+  @@index([workspaceId, userId, createdAt])
+  @@index([status, updatedAt])
+  @@index([documentId])
+  @@map("capture_sessions")
+}
+
+enum CaptureEventType {
+  CLICK
+  INPUT
+  SELECT
+  CHECKBOX
+  RADIO
+  NAVIGATION
+  TAB_CHANGE
+  SCROLL
+  SUBMIT
+  KEYBOARD
+  PAGE_LOAD
+  DOWNLOAD
+  UPLOAD
+  HOVER
+  CUSTOM
+}
+
+model CaptureEvent {
+  id               String           @id @default(cuid())
+  captureSessionId String
+  clientEventId    String           @db.VarChar(100)
+  sequence         Int
+  type             CaptureEventType
+  timestamp        BigInt
+  url              String?          @db.VarChar(2048)
+  element          Json?
+  metadata         Json?
+  assetId          String?
+  createdAt        DateTime         @default(now())
+
+  captureSession CaptureSession @relation(fields: [captureSessionId], references: [id], onDelete: Cascade)
+  asset          CaptureAsset?  @relation(fields: [assetId], references: [id])
+
+  @@unique([captureSessionId, clientEventId])
+  @@index([captureSessionId, sequence])
+  @@map("capture_events")
+}
+
+enum CaptureAssetKind {
+  SCREENSHOT
+  THUMBNAIL
+  PROCESSED
+}
+
+enum CaptureAssetStatus {
+  PENDING_UPLOAD
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+model CaptureAsset {
+  id               String             @id @default(cuid())
+  workspaceId      String
+  captureSessionId String
+  clientAssetId    String?            @db.VarChar(100)
+  kind             CaptureAssetKind   @default(SCREENSHOT)
+  objectKey        String             @db.VarChar(512)
+  bucket           String             @db.VarChar(100)
+  mimeType         String             @db.VarChar(100)
+  width            Int?
+  height           Int?
+  byteSize         Int?
+  checksum         String?            @db.VarChar(128)
+  status           CaptureAssetStatus @default(PENDING_UPLOAD)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  captureSession CaptureSession @relation(fields: [captureSessionId], references: [id], onDelete: Cascade)
+  events         CaptureEvent[]
+  steps          ScribeStep[]
+
+  @@unique([captureSessionId, clientAssetId])
+  @@index([workspaceId, status])
+  @@index([captureSessionId, status])
+  @@map("capture_assets")
+}
+
+// ─── Sharing ─────────────────────────────────────────────────────────────────
+
+enum ShareVisibility {
+  PRIVATE
+  WORKSPACE
+  ANYONE_WITH_LINK
+  PUBLIC
+}
+
+model ShareLink {
+  id              String          @id @default(cuid())
+  documentId      String
+  publicId        String          @unique @db.VarChar(32)
+  visibility      ShareVisibility @default(ANYONE_WITH_LINK)
+  passwordHash    String?         @db.VarChar(255)
+  expiresAt       DateTime?
+  allowedEmails   Json?
+  createdByUserId String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  revokedAt       DateTime?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  creator  User     @relation(fields: [createdByUserId], references: [id])
+
+  @@index([documentId])
+  @@index([publicId, revokedAt])
+  @@map("share_links")
+}
+
+// ─── Billing ─────────────────────────────────────────────────────────────────
+
+enum PlanCode {
+  FREE
+  PRO
+  TEAM
+  BUSINESS
+  ENTERPRISE
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  code         PlanCode @unique
+  name         String   @db.VarChar(100)
+  entitlements Json
+  limits       Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  TRIALING
+  INCOMPLETE
+}
+
+model Subscription {
+  id               String             @id @default(cuid())
+  workspaceId      String             @unique
+  planId           String
+  status           SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId String?            @db.VarChar(100)
+  stripeSubId      String?            @db.VarChar(100)
+  currentPeriodEnd DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  plan      Plan      @relation(fields: [planId], references: [id])
+
+  @@map("subscriptions")
+}
+
+model UsageCounter {
+  id          String   @id @default(cuid())
+  workspaceId String
+  period      String   @db.VarChar(7)
+  metric      String   @db.VarChar(50)
+  value       BigInt   @default(0)
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, period, metric])
+  @@index([workspaceId, period])
+  @@map("usage_counters")
+}
+
+model UsageRecord {
+  id          String   @id @default(cuid())
+  workspaceId String
+  metric      String   @db.VarChar(50)
+  amount      BigInt
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, metric, createdAt])
+  @@map("usage_records")
+}
+
+// ─── Jobs / Audit / Analytics ────────────────────────────────────────────────
+
+enum JobRunStatus {
+  QUEUED
+  ACTIVE
+  COMPLETED
+  FAILED
+}
+
+model JobRun {
+  id         String       @id @default(cuid())
+  queue      String       @db.VarChar(100)
+  jobId      String       @unique @db.VarChar(200)
+  entityType String       @db.VarChar(50)
+  entityId   String       @db.VarChar(50)
+  status     JobRunStatus @default(QUEUED)
+  attempts   Int          @default(0)
+  lastError  String?      @db.Text
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@index([entityType, entityId])
+  @@index([queue, status])
+  @@map("job_runs")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  workspaceId  String
+  actorUserId  String?
+  action       String   @db.VarChar(100)
+  resourceType String   @db.VarChar(50)
+  resourceId   String?  @db.VarChar(50)
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  actor     User?     @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, action])
+  @@map("audit_logs")
+}
+
+model AnalyticsEvent {
+  id          String   @id @default(cuid())
+  workspaceId String?
+  name        String   @db.VarChar(100)
+  resourceId  String?  @db.VarChar(50)
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, name, createdAt])
+  @@index([name, createdAt])
+  @@map("analytics_events")
+}

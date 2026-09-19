@@ -1,36 +1,96 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ZuvigoScribe
 
-## Getting Started
+Production-oriented SaaS foundation for capturing browser workflows and turning them into editable step-by-step guides.
 
-First, run the development server:
+## Stack
+
+- **apps/web** — Next.js 16 + React 19 + Tailwind 4 + shadcn
+- **apps/worker** — BullMQ workers (capture, screenshots, AI, email)
+- **apps/extension** — Chrome Manifest V3 capture extension
+- **packages/** — shared domain modules (`db`, `auth`, `security`, `queue`, `storage`, `ai`, `capture`, …)
+- **MySQL** + **Prisma**, **Redis** + **BullMQ**, **DigitalOcean Spaces** (S3-compatible)
+
+## Prerequisites
+
+- Node.js 22+
+- pnpm 9+
+- Docker Desktop (for MySQL + Redis)
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd zuvigoscribe
+
+# Install
+pnpm install
+
+# Environment
+cp .env.example .env
+# Edit AUTH_SECRET (32+ chars). Optional: Spaces, OpenAI, Google OAuth.
+
+# Infrastructure
+docker compose up -d
+
+# Database (Compose MySQL is on host port 3307 — see DATABASE_URL in .env)
+pnpm db:generate
+pnpm --filter @zuvigo/db run migrate:deploy
+pnpm db:seed
+
+# Build packages once
+pnpm build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Develop
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Web (http://localhost:3000) + worker
+pnpm dev
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Extension (separate terminal)
+pnpm --filter @zuvigo/extension build
+# Chrome → Extensions → Load unpacked → apps/extension/dist
+```
 
-## Learn More
+## Auth
 
-To learn more about Next.js, take a look at the following resources:
+- Email + password
+- Magic link (logged in API/worker logs in development)
+- Google OAuth when `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are set
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Sign up creates a default workspace automatically.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Capture flow
 
-## Deploy on Vercel
+1. Sign in on the web app and copy your workspace id from `/api/v1/me`
+2. Load the extension, open the side panel
+3. Paste workspace id + API base `http://localhost:3000`
+4. Start Capture → perform actions → Complete
+5. Worker builds heuristic steps, processes screenshots, runs AI (or falls back)
+6. Edit in `/editor/:scribeId`, publish, view at `/s/:publicId`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Scripts
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Command | Description |
+|---------|-------------|
+| `pnpm dev` | Turbo: web + worker |
+| `pnpm build` | Build all packages/apps |
+| `pnpm typecheck` | Typecheck monorepo |
+| `pnpm test` | Unit tests (authz, config, …) |
+| `pnpm db:migrate` | Prisma migrate dev |
+| `pnpm db:seed` | Seed plans + demo workspace |
+
+## Docker (production images)
+
+```bash
+docker build -f apps/web/Dockerfile -t zuvigo-web .
+docker build -f apps/worker/Dockerfile -t zuvigo-worker .
+```
+
+Local Compose only runs MySQL + Redis; run Node apps on the host for DX.
+
+## Security notes
+
+- Passwords and secrets from captured pages are never stored
+- Object storage is private; clients use short-lived signed URLs
+- Authorization is workspace-membership + role based (`AuthzService`)
+- Never commit `.env`
