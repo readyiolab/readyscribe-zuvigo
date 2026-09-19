@@ -14,7 +14,7 @@ const root = document.getElementById("root")!;
 async function main() {
   const stored = await chrome.storage.session.get(["captureStateMeta"]);
   const meta = stored.captureStateMeta as { apiBase?: string; workspaceId?: string } | undefined;
-  const apiBase = meta?.apiBase || "http://localhost:3000";
+  const apiBase = meta?.apiBase || "https://readyscribe.zuvigo.com";
 
   await sendExtMessage({ type: "BOOTSTRAP", apiBase });
   const live = await sendExtMessage<ExtMessage>({ type: "GET_STATE" });

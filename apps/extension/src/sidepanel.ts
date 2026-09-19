@@ -354,7 +354,7 @@ function escapeHtml(s: string) {
 }
 
 function apiBase() {
-  return apiBaseEl.value.trim() || "http://localhost:3000";
+  return apiBaseEl.value.trim() || "https://readyscribe.zuvigo.com";
 }
 
 btnNewCapture.onclick = () => openOptions();

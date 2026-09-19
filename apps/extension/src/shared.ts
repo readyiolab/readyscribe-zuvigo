@@ -92,7 +92,7 @@ export const DEFAULT_STATE: CaptureState = {
   workspaces: [],
   userEmail: null,
   signedIn: false,
-  apiBase: "http://localhost:3000",
+  apiBase: "https://readyscribe.zuvigo.com",
   tabId: null,
   sequence: 0,
   events: [],
