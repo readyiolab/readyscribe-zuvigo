@@ -177,14 +177,31 @@ async function processCapture(job: Job<JobPayload>) {
     });
   }
 
-  // Enqueue AI even if no assets — heuristic already saved
-  const aiJobId = `ai-processing-${scribeId}`;
-  await enqueueJob(aiQueue, aiJobId, {
-    workspaceId: session.workspaceId,
-    entityId: scribeId,
-    requestId: job.data.requestId,
-    metadata: { captureSessionId: captureId, documentId },
-  });
+  // If AI is enabled, enqueue AI refinement; otherwise complete immediately with heuristic steps
+  if (config.aiEnabled) {
+    const aiJobId = `ai-processing-${scribeId}`;
+    await enqueueJob(aiQueue, aiJobId, {
+      workspaceId: session.workspaceId,
+      entityId: scribeId,
+      requestId: job.data.requestId,
+      metadata: { captureSessionId: captureId, documentId },
+    });
+  } else {
+    await prisma.document.update({
+      where: { id: documentId! },
+      data: {
+        status: DocumentStatus.READY,
+        processingStage: null,
+      },
+    });
+    if (captureId) {
+      await prisma.captureSession.update({
+        where: { id: captureId },
+        data: { status: CaptureSessionStatus.COMPLETED },
+      });
+    }
+    jlog.info({ captureId, documentId, scribeId }, "Capture finalized directly with heuristic steps (AI disabled)");
+  }
 
   jlog.info({ captureId, documentId, scribeId, steps: heuristicSteps.length }, "Capture processed");
   await markJob(job.id!, "COMPLETED");
@@ -450,10 +467,14 @@ const workers = [
     connection: createRedisConnection(config.REDIS_URL),
     concurrency: 4,
   }),
-  new Worker(QUEUE_NAMES.AI_PROCESSING, wrap(QUEUE_NAMES.AI_PROCESSING, processAI), {
-    connection: createRedisConnection(config.REDIS_URL),
-    concurrency: 2,
-  }),
+  ...(config.aiEnabled
+    ? [
+        new Worker(QUEUE_NAMES.AI_PROCESSING, wrap(QUEUE_NAMES.AI_PROCESSING, processAI), {
+          connection: createRedisConnection(config.REDIS_URL),
+          concurrency: 2,
+        }),
+      ]
+    : []),
   new Worker(QUEUE_NAMES.EMAIL, wrap(QUEUE_NAMES.EMAIL, processEmail), {
     connection: createRedisConnection(config.REDIS_URL),
     concurrency: 2,
