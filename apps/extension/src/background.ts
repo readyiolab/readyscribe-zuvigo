@@ -522,12 +522,57 @@ async function captureRecordedTab(): Promise<string | null> {
   }
 }
 
+async function requestScreenFrame(): Promise<string | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        resolve(null);
+      }
+    }, 1200);
+
+    try {
+      chrome.runtime.sendMessage({ type: "REQUEST_SCREEN_FRAME" }, (res) => {
+        if (!done) {
+          done = true;
+          clearTimeout(timer);
+          if (chrome.runtime.lastError || !res?.dataUrl) {
+            resolve(null);
+          } else {
+            resolve(res.dataUrl);
+          }
+        }
+      });
+    } catch {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        resolve(null);
+      }
+    }
+  });
+}
+
+async function captureScreenshot(): Promise<string | null> {
+  // If recording Entire Screen or Window, prioritize full desktop display stream frame!
+  if (state.captureSource === "screen" || state.captureSource === "window") {
+    try {
+      const desktopFrame = await requestScreenFrame();
+      if (desktopFrame) return desktopFrame;
+    } catch {
+      // fallback
+    }
+  }
+  return await captureRecordedTab();
+}
+
 async function enqueueEvent(ev: BufferedEvent, needsScreenshot: boolean) {
   if (state.status !== "capturing") return;
   ev.sequence = state.sequence++;
-  if (needsScreenshot && state.tabId) {
+  if (needsScreenshot) {
     try {
-      const dataUrl = await captureRecordedTab();
+      const dataUrl = await captureScreenshot();
       if (dataUrl) {
         ev.screenshotDataUrl = dataUrl;
         ev.assetClientId = ev.assetClientId ?? `asset-${ev.clientEventId}`;
@@ -1004,6 +1049,30 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  if (state.status !== "capturing") return;
+  if (state.captureSource !== "screen") return;
+
+  // When windowId is WINDOW_ID_NONE, user focused outside Chrome on a desktop app!
+  if (windowId === chrome.windows.WINDOW_ID_NONE) {
+    const clientEventId = `deskfocus-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const ev: BufferedEvent = {
+      clientEventId,
+      sequence: 0,
+      type: "CUSTOM",
+      timestamp: Date.now(),
+      url: "desktop://application",
+      metadata: {
+        title: "Switch to Desktop Application",
+        description: "Switched to desktop application or window outside browser",
+        isDesktop: true,
+      },
+      assetClientId: `asset-${clientEventId}`,
+    };
+    await enqueueEvent(ev, true);
+  }
+});
+
 chrome.runtime.onMessage.addListener((message: ExtMessage, _sender, sendResponse) => {
   (async () => {
     await loadState();
@@ -1053,6 +1122,41 @@ chrome.runtime.onMessage.addListener((message: ExtMessage, _sender, sendResponse
         broadcast();
         sendResponse({ ok: true });
         break;
+      case "RECORD_DESKTOP_STEP": {
+        if (state.status === "capturing") {
+          const clientEventId = `desk-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          const ev: BufferedEvent = {
+            clientEventId,
+            sequence: 0,
+            type: "CUSTOM",
+            timestamp: Date.now(),
+            url: "desktop://screen",
+            screenshotDataUrl: message.screenshotDataUrl,
+            assetClientId: `asset-${clientEventId}`,
+            metadata: {
+              title: message.title || "Desktop Screen Action",
+              description: message.description || "Action performed on desktop screen",
+              isDesktop: true,
+            },
+          };
+          if (message.screenshotDataUrl) {
+            ev.sequence = state.sequence++;
+            state.events.push(ev);
+            if (state.events.length > MAX_TIMELINE) {
+              state.events = state.events.slice(-MAX_TIMELINE);
+            }
+            state.uploadQueue.push({ ...ev });
+            await bufferEvent(ev);
+            scheduleBackgroundFlush(200);
+            await persistState();
+            broadcast();
+          } else {
+            await enqueueEvent(ev, true);
+          }
+        }
+        sendResponse({ ok: true });
+        break;
+      }
       case "SET_MIC_ENABLED":
         state.isMicEnabled = message.enabled;
         await persistState();

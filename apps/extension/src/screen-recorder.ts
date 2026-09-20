@@ -31,6 +31,9 @@ export class ScreenRecorderService {
   private status: "idle" | "recording" | "paused" | "stopped" = "idle";
   private actualSurface: string = "unknown";
   private options: ScreenRecorderOptions | null = null;
+  private frameGrabVideo: HTMLVideoElement | null = null;
+  private lastFrameThumbnailData: Uint8ClampedArray | null = null;
+  private changeDetectorInterval: ReturnType<typeof setInterval> | null = null;
 
   public getStatus() {
     return this.status;
@@ -42,6 +45,127 @@ export class ScreenRecorderService {
 
   public isRecording() {
     return this.status === "recording" || this.status === "paused";
+  }
+
+  /**
+   * Snaps a high-resolution screenshot frame directly from the active desktop display stream.
+   * This captures the real full desktop screen regardless of which application or tab is active.
+   */
+  public async captureFrame(): Promise<string | null> {
+    if (!this.displayStream) return null;
+    const track = this.displayStream.getVideoTracks()[0];
+    if (!track || track.readyState !== "live") return null;
+
+    try {
+      if (typeof ImageCapture !== "undefined") {
+        const ic = new (window as any).ImageCapture(track);
+        const bitmap = await ic.grabFrame();
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(bitmap, 0, 0);
+          return canvas.toDataURL("image/jpeg", 0.85);
+        }
+      }
+    } catch {
+      // fallback to video element
+    }
+
+    try {
+      if (!this.frameGrabVideo) {
+        this.frameGrabVideo = document.createElement("video");
+        this.frameGrabVideo.muted = true;
+        this.frameGrabVideo.playsInline = true;
+      }
+      if (this.frameGrabVideo.srcObject !== this.displayStream) {
+        this.frameGrabVideo.srcObject = this.displayStream;
+        await this.frameGrabVideo.play().catch(() => {});
+      }
+      const width = this.frameGrabVideo.videoWidth || 1920;
+      const height = this.frameGrabVideo.videoHeight || 1080;
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(this.frameGrabVideo, 0, 0, width, height);
+        return canvas.toDataURL("image/jpeg", 0.85);
+      }
+    } catch (err) {
+      console.warn("captureFrame fallback failed:", err);
+    }
+    return null;
+  }
+
+  /**
+   * Periodically monitors the desktop display stream for visual motion or desktop app actions,
+   * automatically triggering a step capture when user performs actions outside the browser.
+   */
+  public startScreenChangeDetector(onScreenChanged: (dataUrl: string) => void) {
+    this.stopScreenChangeDetector();
+    let lastSnapTime = Date.now();
+    const thumbnailCanvas = document.createElement("canvas");
+    thumbnailCanvas.width = 32;
+    thumbnailCanvas.height = 32;
+    const thumbCtx = thumbnailCanvas.getContext("2d", { willReadFrequently: true });
+
+    this.changeDetectorInterval = setInterval(async () => {
+      if (this.status !== "recording" || !this.displayStream) return;
+      if (Date.now() - lastSnapTime < 2500) return; // at most one step every 2.5s
+
+      try {
+        if (!this.frameGrabVideo) {
+          this.frameGrabVideo = document.createElement("video");
+          this.frameGrabVideo.muted = true;
+          this.frameGrabVideo.playsInline = true;
+          this.frameGrabVideo.srcObject = this.displayStream;
+          await this.frameGrabVideo.play().catch(() => {});
+        } else if (this.frameGrabVideo.srcObject !== this.displayStream) {
+          this.frameGrabVideo.srcObject = this.displayStream;
+          await this.frameGrabVideo.play().catch(() => {});
+        }
+
+        if (!thumbCtx) return;
+        thumbCtx.drawImage(this.frameGrabVideo, 0, 0, 32, 32);
+        const currentData = thumbCtx.getImageData(0, 0, 32, 32).data;
+
+        if (this.lastFrameThumbnailData) {
+          let diffCount = 0;
+          const totalPixels = 32 * 32;
+          for (let i = 0; i < currentData.length; i += 4) {
+            const rDiff = Math.abs(currentData[i]! - this.lastFrameThumbnailData[i]!);
+            const gDiff = Math.abs(currentData[i + 1]! - this.lastFrameThumbnailData[i + 1]!);
+            const bDiff = Math.abs(currentData[i + 2]! - this.lastFrameThumbnailData[i + 2]!);
+            if (rDiff + gDiff + bDiff > 45) {
+              diffCount++;
+            }
+          }
+          // If more than 3.5% of pixels changed, screen had noticeable action
+          if (diffCount > totalPixels * 0.035) {
+            lastSnapTime = Date.now();
+            this.lastFrameThumbnailData = new Uint8ClampedArray(currentData);
+            const fullShot = await this.captureFrame();
+            if (fullShot) {
+              onScreenChanged(fullShot);
+            }
+            return;
+          }
+        }
+        this.lastFrameThumbnailData = new Uint8ClampedArray(currentData);
+      } catch {
+        // ignore error during grab
+      }
+    }, 1000);
+  }
+
+  public stopScreenChangeDetector() {
+    if (this.changeDetectorInterval) {
+      clearInterval(this.changeDetectorInterval);
+      this.changeDetectorInterval = null;
+    }
+    this.lastFrameThumbnailData = null;
   }
 
   public async start(options: ScreenRecorderOptions): Promise<MediaStream> {
@@ -280,6 +404,16 @@ export class ScreenRecorderService {
   }
 
   private cleanupStreams() {
+    this.stopScreenChangeDetector();
+    if (this.frameGrabVideo) {
+      try {
+        this.frameGrabVideo.pause();
+        this.frameGrabVideo.srcObject = null;
+      } catch {
+        // ignore
+      }
+      this.frameGrabVideo = null;
+    }
     if (this.displayStream) {
       this.displayStream.getTracks().forEach((t) => t.stop());
       this.displayStream = null;

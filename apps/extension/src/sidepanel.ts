@@ -232,6 +232,22 @@ async function startScreenRecordingFlow(
 
     updateMicUI(includeMic);
 
+    // If recording desktop/window, start intelligent motion detector for desktop actions
+    if (source === "screen" || source === "window") {
+      screenRecorder.startScreenChangeDetector(async (dataUrl) => {
+        try {
+          await send({
+            type: "RECORD_DESKTOP_STEP",
+            title: "Desktop Screen Action",
+            description: "Action performed on desktop screen",
+            screenshotDataUrl: dataUrl,
+          });
+        } catch {
+          // ignore
+        }
+      });
+    }
+
     // Also begin capture session in background worker for unified multi-tab guide recording
     let activeTabId = 0;
     try {
@@ -267,6 +283,7 @@ async function startScreenRecordingFlow(
 }
 
 async function stopAllRecording() {
+  screenRecorder.stopScreenChangeDetector();
   if (isScreenRecording || screenRecorder.isRecording()) {
     isScreenRecording = false;
     screenRecPill.hidden = true;
@@ -276,10 +293,15 @@ async function stopAllRecording() {
         recordedVideoUrl = res.url;
         recordedVideoPlayer.src = res.url;
         videoPreviewCard.hidden = false;
-        chrome.runtime.sendMessage({
-          type: "SCREEN_RECORDING_READY",
-          videoBlobUrl: res.url,
-        }).catch(() => {});
+        await new Promise<void>((resolve) => {
+          chrome.runtime.sendMessage(
+            {
+              type: "SCREEN_RECORDING_READY",
+              videoBlobUrl: res.url,
+            },
+            () => resolve(),
+          );
+        });
       }
     } catch (err) {
       console.warn("Error stopping screen recorder:", err);
@@ -289,6 +311,9 @@ async function stopAllRecording() {
 }
 
 function formatInstruction(e: any): string {
+  if (e.metadata?.title && (e.type === "CUSTOM" || e.metadata?.isDesktop)) {
+    return escapeHtml(String(e.metadata.title));
+  }
   if (e.type === "TAB_CHANGE") {
     const title = e.metadata?.title || "tab";
     return `Switch to <strong>${escapeHtml(String(title))}</strong> tab`;
@@ -631,8 +656,44 @@ workspaceEl.onchange = () => {
   chrome.storage.local.set({ zuvigo_active_workspace_id: workspaceEl.value });
 };
 
-chrome.runtime.onMessage.addListener((msg: ExtMessage) => {
+const footerSnapStepBtn = document.getElementById("footerSnapStepBtn") as HTMLButtonElement | null;
+if (footerSnapStepBtn) {
+  footerSnapStepBtn.onclick = async () => {
+    try {
+      let shot: string | null = null;
+      if (screenRecorder.isRecording()) {
+        shot = await screenRecorder.captureFrame();
+      }
+      await send({
+        type: "RECORD_DESKTOP_STEP",
+        title: "Desktop Screen Capture",
+        description: "Desktop screen step captured",
+        screenshotDataUrl: shot || undefined,
+      });
+    } catch (err) {
+      console.warn("Could not snap desktop step:", err);
+    }
+  };
+}
+
+chrome.runtime.onMessage.addListener((msg: ExtMessage, _sender, sendResponse) => {
   if (msg.type === "STATE") render(msg.state);
+  if (msg.type === "REQUEST_SCREEN_FRAME") {
+    if (screenRecorder.isRecording()) {
+      screenRecorder
+        .captureFrame()
+        .then((dataUrl) => {
+          sendResponse({ dataUrl });
+        })
+        .catch(() => {
+          sendResponse({ dataUrl: null });
+        });
+      return true; // async sendResponse
+    } else {
+      sendResponse({ dataUrl: null });
+      return false;
+    }
+  }
 });
 
 send({ type: "GET_STATE" }, () => {

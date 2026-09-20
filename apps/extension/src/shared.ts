@@ -41,7 +41,14 @@ export type ExtMessage =
   | { type: "PING" }
   | { type: "SET_ACTIVE_TAB"; tabId: number; title?: string; url?: string }
   | { type: "SCREEN_RECORDING_READY"; videoBlobUrl: string }
-  | { type: "SET_MIC_ENABLED"; enabled: boolean };
+  | { type: "SET_MIC_ENABLED"; enabled: boolean }
+  | {
+      type: "RECORD_DESKTOP_STEP";
+      title?: string;
+      description?: string;
+      screenshotDataUrl?: string;
+    }
+  | { type: "REQUEST_SCREEN_FRAME" };
 
 export interface HighlightBox {
   /** Normalized 0–1 relative to viewport (matches captureVisibleTab). */

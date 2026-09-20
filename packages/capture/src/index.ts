@@ -373,16 +373,16 @@ export function groupEventsIntoSteps(events: NormalizedEvent[]): HeuristicStep[]
         break;
       }
       case CaptureEventType.CUSTOM: {
-        // Orphan result without parent — treat as informational step
+        const title = typeof ev.metadata?.title === "string" ? ev.metadata.title : undefined;
+        const description =
+          typeof ev.metadata?.description === "string" ? ev.metadata.description : undefined;
         const resultText =
           typeof ev.metadata?.resultText === "string" ? ev.metadata.resultText : undefined;
         steps.push({
-          title: resultText ? "Result" : "Perform action",
-          description: resultText ?? "Complete the action.",
+          title: title ?? (resultText ? "Result" : "Perform action"),
+          description: description ?? (resultText ?? "Complete the action."),
           assetClientId: ev.assetClientId,
-          annotations: resultText
-            ? [{ kind: "click", resultText }]
-            : [],
+          annotations: resultText ? [{ kind: "click", resultText }] : [],
           sourceEventIds: [ev.clientEventId],
         });
         i += 1;
