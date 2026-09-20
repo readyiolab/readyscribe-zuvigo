@@ -27,6 +27,17 @@ async function main() {
     getWorkspaceId: () => state?.workspaceId ?? meta?.workspaceId ?? null,
     onStarted: () => window.close(),
     onClose: () => window.close(),
+    onStartDesktopRecording: async () => {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          await chrome.sidePanel.open({ tabId: tab.id });
+        }
+      } catch {
+        // ignore
+      }
+      window.close();
+    },
   });
 }
 

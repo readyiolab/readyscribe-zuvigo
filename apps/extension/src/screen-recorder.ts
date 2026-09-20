@@ -7,6 +7,7 @@ export interface ScreenRecorderOptions {
   onStateChange?: (status: "idle" | "recording" | "paused" | "stopped") => void;
   onTick?: (elapsedSeconds: number) => void;
   onEnded?: () => void;
+  onSurfaceSelected?: (surface: "monitor" | "window" | "browser" | string) => void;
 }
 
 export interface ScreenRecordingResult {
@@ -28,10 +29,15 @@ export class ScreenRecorderService {
   private timerInterval: ReturnType<typeof setInterval> | null = null;
   private isMicMuted = false;
   private status: "idle" | "recording" | "paused" | "stopped" = "idle";
+  private actualSurface: string = "unknown";
   private options: ScreenRecorderOptions | null = null;
 
   public getStatus() {
     return this.status;
+  }
+
+  public getActualSurface() {
+    return this.actualSurface;
   }
 
   public isRecording() {
@@ -43,10 +49,11 @@ export class ScreenRecorderService {
     this.chunks = [];
     this.pausedDuration = 0;
     this.status = "idle";
+    this.actualSurface = "unknown";
 
-    // 1. Capture Display Stream with resilient constraint fallback
+    // 1. Capture Display Stream with Chrome surface preferences and resilient fallback
     try {
-      const displayConstraints: DisplayMediaStreamOptions = {
+      const displayConstraints: any = {
         video: {
           displaySurface:
             options.source === "screen"
@@ -57,7 +64,13 @@ export class ScreenRecorderService {
           frameRate: { ideal: 30, max: 60 },
         },
         audio: Boolean(options.includeSystemAudio),
-      } as DisplayMediaStreamOptions;
+        // Modern Chrome options to prefer Full Screen / Monitor
+        preferCurrentTab: false,
+        selfBrowserSurface: options.source === "screen" ? "exclude" : "include",
+        surfaceSwitching: "include",
+        systemAudio: options.includeSystemAudio ? "include" : "exclude",
+        monitorTypeSurfaces: "include",
+      };
       this.displayStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
     } catch (primaryErr) {
       console.warn("Retrying getDisplayMedia with basic constraints:", primaryErr);
@@ -67,9 +80,13 @@ export class ScreenRecorderService {
       });
     }
 
-    // Watch for user clicking the native browser "Stop sharing" bar
+    // Identify actual surface selected by user in Chrome's native dialog
     const videoTrack = this.displayStream.getVideoTracks()[0];
     if (videoTrack) {
+      const settings = videoTrack.getSettings?.();
+      this.actualSurface = settings?.displaySurface || (options.source === "screen" ? "monitor" : "browser");
+      options.onSurfaceSelected?.(this.actualSurface);
+
       videoTrack.onended = () => {
         if (this.status === "recording" || this.status === "paused") {
           this.options?.onEnded?.();

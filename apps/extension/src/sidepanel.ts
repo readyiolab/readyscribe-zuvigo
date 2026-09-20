@@ -193,6 +193,28 @@ async function startScreenRecordingFlow(
       source,
       includeMic,
       includeSystemAudio,
+      onSurfaceSelected: (surface) => {
+        if (source === "screen") {
+          if (surface === "monitor") {
+            screenRecSource.textContent = "Entire Screen";
+            errorEl.hidden = true;
+          } else if (surface === "browser") {
+            screenRecSource.textContent = "Chrome Tab";
+            errorEl.textContent =
+              "Notice: You shared a 'Chrome Tab' instead of 'Entire Screen' in Chrome's sharing popup. Desktop apps outside the browser will not be recorded in this video. To record all desktop apps, click Stop, then select the 'Entire Screen' tab in Chrome's popup next time.";
+            errorEl.hidden = false;
+          } else if (surface === "window") {
+            screenRecSource.textContent = "Window";
+          }
+        } else {
+          screenRecSource.textContent =
+            surface === "monitor"
+              ? "Entire Screen"
+              : surface === "window"
+                ? "Window"
+                : "Browser Tab";
+        }
+      },
       onTick: (sec) => {
         screenRecTimer.textContent = formatSeconds(sec);
       },
@@ -315,12 +337,15 @@ function render(state: CaptureState) {
 
   if (state.status === "capturing" && screenRecorder.isRecording()) {
     screenRecPill.hidden = false;
+    const actualSurface = screenRecorder.getActualSurface();
     screenRecSource.textContent =
-      state.captureSource === "screen"
-        ? "Desktop"
-        : state.captureSource === "window"
+      actualSurface === "monitor"
+        ? "Entire Screen"
+        : actualSurface === "window"
           ? "Window"
-          : "Tab";
+          : actualSurface === "browser"
+            ? (state.captureSource === "screen" ? "Chrome Tab" : "Browser Tab")
+            : (state.captureSource === "screen" ? "Entire Screen" : "Window");
   } else if (state.status !== "capturing") {
     screenRecPill.hidden = true;
   }

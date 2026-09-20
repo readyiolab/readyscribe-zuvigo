@@ -144,14 +144,29 @@ export function mountCaptureOptions(opts: CaptureOptionsMount): () => void {
       <!-- SCREEN / WINDOW ACTION VIEW -->
       <div class="co-desktop-view" data-co="desktop-view" hidden>
         <div class="co-desktop-card">
-          <div class="co-desktop-card-title" data-co="desktop-title">Record Entire Desktop</div>
+          <div class="co-desktop-card-title" data-co="desktop-title">Record Entire Screen</div>
           <p class="co-desktop-card-desc" data-co="desktop-card-desc">
-            You will be prompted to select your screen. Switching between browser tabs, windows, or desktop software will remain continuously visible in the recording with synchronized audio.
+            Captures your entire desktop screen. Switching between browser tabs, application windows, or desktop software will remain continuously visible in the recording.
           </p>
+
+          <div class="co-share-guide" data-co="share-guide">
+            <div class="co-share-guide-badge" data-co="guide-badge">HOW TO RECORD FULL DESKTOP</div>
+            <div class="co-share-guide-title" data-co="guide-title">When Chrome's sharing popup appears:</div>
+            <ol class="co-share-guide-list" data-co="guide-list">
+              <li>Click the <strong>Entire Screen</strong> tab at the top (not "Chrome Tab")</li>
+              <li>Click your <strong>Screen thumbnail</strong> to select it</li>
+              <li>Click the blue <strong>Share</strong> button</li>
+            </ol>
+          </div>
+
           <button type="button" class="co-btn-primary" data-co="start-desktop">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
             <span data-co="start-desktop-text">Start Desktop Recording</span>
           </button>
+
+          <div class="co-desktop-note">
+            💡 Full screen video captures all desktop apps, windows, and tabs. Step-by-step clicks are captured across your browser tabs.
+          </div>
         </div>
       </div>
 
@@ -199,6 +214,9 @@ export function mountCaptureOptions(opts: CaptureOptionsMount): () => void {
   const sourceTabs = root.querySelectorAll<HTMLButtonElement>(".co-source-tab");
   const optMic = root.querySelector('[data-co="opt-mic"]') as HTMLInputElement;
   const optSystemAudio = root.querySelector('[data-co="opt-system-audio"]') as HTMLInputElement;
+  const guideBadge = root.querySelector('[data-co="guide-badge"]') as HTMLElement | null;
+  const guideTitle = root.querySelector('[data-co="guide-title"]') as HTMLElement | null;
+  const guideList = root.querySelector('[data-co="guide-list"]') as HTMLElement | null;
 
   function setStatus(msg: string) {
     if (!msg) {
@@ -236,6 +254,15 @@ export function mountCaptureOptions(opts: CaptureOptionsMount): () => void {
       startDesktopText.textContent = "Start Desktop Recording";
       sourceDesc.textContent =
         "Desktop screen recorder: records full display across all tabs, windows, and apps with continuous audio/video synchronization.";
+      if (guideBadge) guideBadge.textContent = "HOW TO RECORD FULL DESKTOP";
+      if (guideTitle) guideTitle.textContent = "When Chrome's sharing popup appears:";
+      if (guideList) {
+        guideList.innerHTML = `
+          <li>Click the <strong>Entire Screen</strong> tab at the top (not "Chrome Tab")</li>
+          <li>Click your <strong>Screen thumbnail</strong> to select it</li>
+          <li>Click the blue <strong>Share</strong> button</li>
+        `;
+      }
     } else if (source === "window") {
       tabView.hidden = true;
       desktopView.hidden = false;
@@ -245,6 +272,15 @@ export function mountCaptureOptions(opts: CaptureOptionsMount): () => void {
       startDesktopText.textContent = "Start Window Recording";
       sourceDesc.textContent =
         "Application window recorder: keeps recording continuously within the selected application window.";
+      if (guideBadge) guideBadge.textContent = "HOW TO RECORD APPLICATION WINDOW";
+      if (guideTitle) guideTitle.textContent = "When Chrome's sharing popup appears:";
+      if (guideList) {
+        guideList.innerHTML = `
+          <li>Click the <strong>Window</strong> tab at the top</li>
+          <li>Click the <strong>Application window</strong> you want to record</li>
+          <li>Click the blue <strong>Share</strong> button</li>
+        `;
+      }
     } else {
       tabView.hidden = false;
       desktopView.hidden = true;
@@ -665,6 +701,49 @@ export const CAPTURE_OPTIONS_CSS = `
   font-size: 11.5px;
   line-height: 1.45;
   color: #64748b;
+}
+.co-share-guide {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #6366f1;
+  border-radius: 8px;
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.co-share-guide-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: #4f46e5;
+  text-transform: uppercase;
+}
+.co-share-guide-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.co-share-guide-list {
+  margin: 0;
+  padding-left: 17px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #334155;
+}
+.co-share-guide-list li {
+  margin-bottom: 2px;
+}
+.co-share-guide-list strong {
+  color: #0f172a;
+}
+.co-desktop-note {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #64748b;
+  background: #f1f5f9;
+  border-radius: 6px;
+  padding: 6px 8px;
 }
 .co-btn-primary {
   display: flex;
