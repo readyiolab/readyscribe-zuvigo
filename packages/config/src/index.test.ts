@@ -44,4 +44,17 @@ describe("loadConfig", () => {
     expect(config.SPACES_ACCESS_KEY).toBe("key");
     expect(config.SPACES_REGION).toBe("blr1");
   });
+
+  it("constructs REDIS_URL from REDIS_HOST and REDIS_PORT", () => {
+    const config = loadConfig({
+      NODE_ENV: "test",
+      DATABASE_URL: "mysql://user:pass@localhost:3306/zuvigo",
+      AUTH_SECRET: "a".repeat(32),
+      REDIS_HOST: "139.59.8.68",
+      REDIS_PORT: "6379",
+    } as NodeJS.ProcessEnv);
+
+    expect(config.REDIS_URL).toBe("redis://139.59.8.68:6379");
+  });
 });
+

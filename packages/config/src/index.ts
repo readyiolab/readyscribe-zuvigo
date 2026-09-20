@@ -105,6 +105,14 @@ export function normalizeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
     nextEnv.DATABASE_URL = `mysql://${user}${pass}@${host}:${port}/${dbName}`;
   }
 
+  // Construct REDIS_URL from REDIS_HOST & REDIS_PORT (with optional REDIS_PASSWORD) if REDIS_URL is not directly set
+  if (!nextEnv.REDIS_URL && nextEnv.REDIS_HOST) {
+    const port = nextEnv.REDIS_PORT || "6379";
+    const pass = nextEnv.REDIS_PASSWORD || nextEnv.REDIS_PASS;
+    const auth = pass ? `:${encodeURIComponent(pass)}@` : "";
+    nextEnv.REDIS_URL = `redis://${auth}${nextEnv.REDIS_HOST}:${port}`;
+  }
+
   // Construct REDIS_URL from Upstash REST URL and token ONLY if standard REDIS_URL is not explicitly set
   if (
     !nextEnv.REDIS_URL &&
