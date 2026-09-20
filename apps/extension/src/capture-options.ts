@@ -379,10 +379,19 @@ export function mountCaptureOptions(opts: CaptureOptionsMount): () => void {
       });
 
       // Also start capture session in background worker for unified state
-      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      let activeTabId = 0;
+      try {
+        const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (activeTab?.id && activeTab.url && /^https?:\/\//i.test(activeTab.url)) {
+          activeTabId = activeTab.id;
+        }
+      } catch {
+        // ignore query failure
+      }
+
       await sendExtMessage<ExtMessage>({
         type: "BEGIN_CAPTURE_ON_TAB",
-        tabId: activeTab?.id ?? 0,
+        tabId: activeTabId,
         workspaceId,
         apiBase: getApiBase(),
         captureSource: currentSource,

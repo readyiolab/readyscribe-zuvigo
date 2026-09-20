@@ -483,10 +483,14 @@ async function captureRecordedTab(): Promise<string | null> {
 
   if (targetWindowId == null) return null;
 
-  return chrome.tabs.captureVisibleTab(targetWindowId, {
-    format: "jpeg",
-    quality: 85,
-  });
+  try {
+    return await chrome.tabs.captureVisibleTab(targetWindowId, {
+      format: "jpeg",
+      quality: 85,
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function enqueueEvent(ev: BufferedEvent, needsScreenshot: boolean) {
@@ -615,6 +619,8 @@ async function beginCaptureOnTab(opts: {
 
   try {
     let tabId = opts.tabId;
+    const isDesktopMode = opts.captureSource === "screen" || opts.captureSource === "window";
+
     if (opts.createNewTab) {
       const created = await chrome.tabs.create({ url: "https://www.google.com/", active: true });
       if (created.id == null) throw new Error("Could not create a new tab");
@@ -622,18 +628,26 @@ async function beginCaptureOnTab(opts: {
       state.openingMessage = "Loading page…";
       await persistState();
       broadcast();
-    } else {
-      const tab = await chrome.tabs.get(tabId);
-      if (tab.windowId != null) {
-        await chrome.windows.update(tab.windowId, { focused: true });
+      await waitForTabComplete(tabId);
+    } else if (tabId) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.windowId != null && !isDesktopMode) {
+          await chrome.windows.update(tab.windowId, { focused: true });
+        }
+        if (!isDesktopMode) {
+          await chrome.tabs.update(tabId, { active: true });
+        }
+        state.openingMessage = "Loading page…";
+        await persistState();
+        broadcast();
+        if (/^https?:\/\//i.test(tab.url || "")) {
+          await waitForTabComplete(tabId);
+        }
+      } catch {
+        // Tab may not exist or not be accessible
       }
-      await chrome.tabs.update(tabId, { active: true });
-      state.openingMessage = "Loading page…";
-      await persistState();
-      broadcast();
     }
-
-    await waitForTabComplete(tabId);
 
     const ws =
       (opts.workspaceId || state.workspaceId || "").trim() ||
@@ -721,10 +735,20 @@ async function startCapture(tabId: number, workspaceId: string, apiBase: string)
   broadcast();
 
   try {
-    const tab = await chrome.tabs.get(tabId);
-    const rawUrl = tab.url ?? "";
-    const sourceUrl =
-      rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : undefined;
+    let sourceUrl: string | undefined;
+    let isWebUrl = false;
+    if (tabId) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        const rawUrl = tab.url ?? "";
+        if (/^https?:\/\//i.test(rawUrl)) {
+          sourceUrl = rawUrl;
+          isWebUrl = true;
+        }
+      } catch {
+        // Tab not accessible
+      }
+    }
 
     const capture = await api("/api/v1/captures", {
       method: "POST",
@@ -742,13 +766,26 @@ async function startCapture(tabId: number, workspaceId: string, apiBase: string)
     await persistState();
     broadcast();
 
-    await chrome.tabs.sendMessage(tabId, { type: "START_CAPTURE" }).catch(async () => {
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ["content.js"],
+    if (isWebUrl && tabId) {
+      await chrome.tabs.sendMessage(tabId, { type: "START_CAPTURE" }).catch(async () => {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ["content.js"],
+          });
+          await chrome.tabs.sendMessage(tabId, { type: "START_CAPTURE" });
+        } catch {
+          // Ignore script injection failure on non-scriptable or protected pages
+        }
       });
-      await chrome.tabs.sendMessage(tabId, { type: "START_CAPTURE" });
-    });
+    } else if (state.captureSource === "tab") {
+      state.status = "failed";
+      state.lastError =
+        "Cannot record internal pages (chrome://). Please open any web page (e.g. google.com) or select an open tab to record.";
+      await persistState();
+      broadcast();
+      return;
+    }
   } catch (err) {
     state.status = "failed";
     state.lastError = (err as Error).message;
