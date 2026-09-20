@@ -170,8 +170,8 @@ function openOptions(initialSource: RecordingSource = "screen") {
       closeOptions();
     },
     onStartDesktopRecording: async ({ source, mode, includeMic, includeSystemAudio }) => {
-      closeOptions();
       await startScreenRecordingFlow(source, mode, includeMic, includeSystemAudio);
+      closeOptions();
     },
   });
 }
@@ -211,10 +211,19 @@ async function startScreenRecordingFlow(
     updateMicUI(includeMic);
 
     // Also begin capture session in background worker for unified multi-tab guide recording
-    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    let activeTabId = 0;
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (activeTab?.id && activeTab.url && /^https?:\/\//i.test(activeTab.url)) {
+        activeTabId = activeTab.id;
+      }
+    } catch {
+      // ignore
+    }
+
     send({
       type: "BEGIN_CAPTURE_ON_TAB",
-      tabId: activeTab?.id ?? 0,
+      tabId: activeTabId,
       workspaceId: workspaceEl.value.trim(),
       apiBase: apiBase(),
       captureSource: source,

@@ -44,31 +44,28 @@ export class ScreenRecorderService {
     this.pausedDuration = 0;
     this.status = "idle";
 
-    const displayConstraints: DisplayMediaStreamOptions = {
-      video: {
-        displaySurface:
-          options.source === "screen"
-            ? "monitor"
-            : options.source === "window"
-              ? "window"
-              : "browser",
-        frameRate: { ideal: 30, max: 60 },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
-      },
-      audio: options.includeSystemAudio
-        ? {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-          }
-        : false,
-      selfBrowserSurface: "exclude",
-      systemAudio: options.includeSystemAudio ? "include" : "exclude",
-    } as DisplayMediaStreamOptions;
-
-    // 1. Capture Display Stream
-    this.displayStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+    // 1. Capture Display Stream with resilient constraint fallback
+    try {
+      const displayConstraints: DisplayMediaStreamOptions = {
+        video: {
+          displaySurface:
+            options.source === "screen"
+              ? "monitor"
+              : options.source === "window"
+                ? "window"
+                : "browser",
+          frameRate: { ideal: 30, max: 60 },
+        },
+        audio: Boolean(options.includeSystemAudio),
+      } as DisplayMediaStreamOptions;
+      this.displayStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+    } catch (primaryErr) {
+      console.warn("Retrying getDisplayMedia with basic constraints:", primaryErr);
+      this.displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: Boolean(options.includeSystemAudio),
+      });
+    }
 
     // Watch for user clicking the native browser "Stop sharing" bar
     const videoTrack = this.displayStream.getVideoTracks()[0];
