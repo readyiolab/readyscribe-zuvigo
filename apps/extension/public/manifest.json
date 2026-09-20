@@ -3,7 +3,7 @@
   "name": "ReadyScribe Capture",
   "version": "0.1.3",
   "description": "Capture browser workflows as step-by-step guides",
-  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "tabs", "cookies"],
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "tabs", "cookies", "tabCapture", "offscreen"],
   "host_permissions": ["<all_urls>"],
   "optional_host_permissions": ["<all_urls>"],
   "background": {

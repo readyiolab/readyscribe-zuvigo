@@ -2,7 +2,14 @@ import {
   CAPTURE_OPTIONS_CSS,
   mountCaptureOptions,
 } from "./capture-options";
-import { eventLabel, type CaptureState, type ExtMessage } from "./shared";
+import {
+  eventLabel,
+  type CaptureState,
+  type ExtMessage,
+  type RecordingSource,
+  type RecordingMode,
+} from "./shared";
+import { screenRecorder } from "./screen-recorder";
 
 const style = document.createElement("style");
 style.textContent = CAPTURE_OPTIONS_CSS;
@@ -10,6 +17,10 @@ document.head.appendChild(style);
 
 const statusPill = document.getElementById("statusPill")!;
 const authLine = document.getElementById("authLine")!;
+const screenRecPill = document.getElementById("screenRecPill") as HTMLElement;
+const screenRecSource = document.getElementById("screenRecSource") as HTMLElement;
+const screenRecTimer = document.getElementById("screenRecTimer") as HTMLElement;
+
 const authCard = document.getElementById("authCard")!;
 const controlsCard = document.getElementById("controlsCard")!;
 const captureOptionsCard = document.getElementById("captureOptionsCard")!;
@@ -44,11 +55,38 @@ const fixedBottomBar = document.getElementById("fixedBottomBar")!;
 const footerPauseBtn = document.getElementById("footerPauseBtn") as HTMLButtonElement;
 const footerUndoBtn = document.getElementById("footerUndoBtn") as HTMLButtonElement;
 const footerCompleteBtn = document.getElementById("footerCompleteBtn") as HTMLButtonElement;
+const footerMicBtn = document.getElementById("footerMicBtn") as HTMLButtonElement | null;
+const micBadge = document.getElementById("micBadge") as HTMLElement | null;
 const closePanelBtn = document.getElementById("closePanelBtn") as HTMLButtonElement | null;
+const btnLaunchDesktopRec = document.getElementById("btnLaunchDesktopRec") as HTMLButtonElement | null;
+
+// Video Preview Elements
+const videoPreviewCard = document.getElementById("videoPreviewCard") as HTMLElement;
+const recordedVideoPlayer = document.getElementById("recordedVideoPlayer") as HTMLVideoElement;
+const btnDownloadVideo = document.getElementById("btnDownloadVideo") as HTMLButtonElement;
 
 let lastEventCount = 0;
 let optionsDispose: (() => void) | null = null;
 let optionsOpen = false;
+let recordedVideoUrl: string | null = null;
+let isScreenRecording = false;
+
+function formatSeconds(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function updateMicUI(active: boolean) {
+  if (!footerMicBtn || !micBadge) return;
+  if (active) {
+    footerMicBtn.classList.add("active");
+    micBadge.textContent = "Mic ON";
+  } else {
+    footerMicBtn.classList.remove("active");
+    micBadge.textContent = "Mic OFF";
+  }
+}
 
 function send(msg: ExtMessage, cb?: (res: ExtMessage) => void) {
   chrome.runtime.sendMessage(msg, (res) => {
@@ -101,7 +139,7 @@ function closeOptions() {
   advancedBlock.hidden = false;
 }
 
-function openOptions() {
+function openOptions(initialSource: RecordingSource = "screen") {
   if (!workspaceEl.value.trim()) {
     errorEl.textContent = "Select a workspace first.";
     errorEl.hidden = false;
@@ -120,19 +158,110 @@ function openOptions() {
   advancedBlock.hidden = true;
   controlsCard.hidden = true;
   if (btnCancelOptions) btnCancelOptions.hidden = false;
+
   optionsDispose = mountCaptureOptions({
     root: captureOptionsRoot,
     showClose: true,
+    initialSource,
     getApiBase: () => apiBase(),
     getWorkspaceId: () => workspaceEl.value.trim() || null,
     onClose: () => closeOptions(),
     onStarted: () => {
       closeOptions();
     },
+    onStartDesktopRecording: async ({ source, mode, includeMic, includeSystemAudio }) => {
+      closeOptions();
+      await startScreenRecordingFlow(source, mode, includeMic, includeSystemAudio);
+    },
   });
 }
 
+async function startScreenRecordingFlow(
+  source: RecordingSource,
+  mode: RecordingMode,
+  includeMic: boolean,
+  includeSystemAudio: boolean,
+) {
+  try {
+    screenRecSource.textContent =
+      source === "screen" ? "Desktop" : source === "window" ? "Window" : "Tab";
+    screenRecTimer.textContent = "00:00";
+    screenRecPill.hidden = false;
+    isScreenRecording = true;
+
+    await screenRecorder.start({
+      source,
+      includeMic,
+      includeSystemAudio,
+      onTick: (sec) => {
+        screenRecTimer.textContent = formatSeconds(sec);
+      },
+      onEnded: () => {
+        void stopAllRecording();
+      },
+      onStateChange: (status) => {
+        if (status === "paused") {
+          screenRecPill.style.opacity = "0.5";
+        } else {
+          screenRecPill.style.opacity = "1";
+        }
+      },
+    });
+
+    updateMicUI(includeMic);
+
+    // Also begin capture session in background worker for unified multi-tab guide recording
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    send({
+      type: "BEGIN_CAPTURE_ON_TAB",
+      tabId: activeTab?.id ?? 0,
+      workspaceId: workspaceEl.value.trim(),
+      apiBase: apiBase(),
+      captureSource: source,
+      recordingMode: mode,
+      includeMic,
+      includeSystemAudio,
+    });
+  } catch (err) {
+    isScreenRecording = false;
+    screenRecPill.hidden = true;
+    const msg = (err as Error).message || "Could not start desktop recording";
+    if (msg.includes("Permission") || msg.includes("denied")) {
+      errorEl.textContent = "Screen capture was cancelled.";
+    } else {
+      errorEl.textContent = msg;
+    }
+    errorEl.hidden = false;
+  }
+}
+
+async function stopAllRecording() {
+  if (isScreenRecording || screenRecorder.isRecording()) {
+    isScreenRecording = false;
+    screenRecPill.hidden = true;
+    try {
+      const res = await screenRecorder.stop();
+      if (res && res.url) {
+        recordedVideoUrl = res.url;
+        recordedVideoPlayer.src = res.url;
+        videoPreviewCard.hidden = false;
+        chrome.runtime.sendMessage({
+          type: "SCREEN_RECORDING_READY",
+          videoBlobUrl: res.url,
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.warn("Error stopping screen recorder:", err);
+    }
+  }
+  send({ type: "STOP_CAPTURE" });
+}
+
 function formatInstruction(e: any): string {
+  if (e.type === "TAB_CHANGE") {
+    const title = e.metadata?.title || "tab";
+    return `Switch to <strong>${escapeHtml(String(title))}</strong> tab`;
+  }
   if (e.type === "NAVIGATION" || e.type === "PAGE_LOAD") {
     if (e.metadata?.phase === "after") return "Page loaded";
     if (e.url) return `Navigate to ${escapeHtml(e.url)}`;
@@ -142,7 +271,14 @@ function formatInstruction(e: any): string {
     return escapeHtml(e.metadata.resultText);
   }
   if (e.type === "CLICK") {
-    const raw = e.element?.text || e.element?.ariaLabel || e.element?.alt || e.element?.title || e.element?.name || e.element?.role || "this field";
+    const raw =
+      e.element?.text ||
+      e.element?.ariaLabel ||
+      e.element?.alt ||
+      e.element?.title ||
+      e.element?.name ||
+      e.element?.role ||
+      "this field";
     return `Click ${escapeHtml(String(raw).trim())}.`;
   }
   if (e.type === "INPUT" || e.type === "CHANGE") {
@@ -167,6 +303,24 @@ function render(state: CaptureState) {
         : state.status === "capturing"
           ? `<span class="dot"></span> Recording`
           : st.text;
+
+  if (state.status === "capturing" && screenRecorder.isRecording()) {
+    screenRecPill.hidden = false;
+    screenRecSource.textContent =
+      state.captureSource === "screen"
+        ? "Desktop"
+        : state.captureSource === "window"
+          ? "Window"
+          : "Tab";
+  } else if (state.status !== "capturing") {
+    screenRecPill.hidden = true;
+  }
+
+  if (state.videoBlobUrl && !recordedVideoUrl) {
+    recordedVideoUrl = state.videoBlobUrl;
+    recordedVideoPlayer.src = state.videoBlobUrl;
+    videoPreviewCard.hidden = false;
+  }
 
   if (state.openingTab && state.openingMessage) {
     if (openingBanner) {
@@ -226,10 +380,8 @@ function render(state: CaptureState) {
   btnNewCapture.disabled = !state.signedIn || !workspaceEl.value || busy || live || optionsOpen;
   workspaceEl.disabled = live || busy || optionsOpen;
 
-  // Visual layout — exactly one primary mode at a time
   const processing = state.status === "processing" || state.status === "uploading";
 
-  // Reset panels; then enable only the active mode
   authCard.hidden = state.signedIn;
   controlsCard.hidden = true;
   capturingIdle.hidden = true;
@@ -253,7 +405,7 @@ function render(state: CaptureState) {
     processingEl.hidden = false;
   } else if (live) {
     fixedBottomBar.hidden = false;
-    if (state.events.length === 0) {
+    if (state.events.length === 0 && !recordedVideoUrl) {
       capturingIdle.hidden = false;
     } else {
       feedCard.hidden = false;
@@ -264,10 +416,13 @@ function render(state: CaptureState) {
       : `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
     footerUndoBtn.disabled = state.events.length === 0;
   } else {
-    // Idle / Ready
+    // Idle / Ready / Completed
     controlsCard.hidden = false;
     idleHint.hidden = !state.signedIn;
     advancedBlock.hidden = false;
+    if (recordedVideoUrl || state.events.length > 0) {
+      feedCard.hidden = false;
+    }
   }
 
   if (state.lastError) {
@@ -279,7 +434,7 @@ function render(state: CaptureState) {
   }
 
   if (stepCountEl) stepCountEl.textContent = String(state.events.length);
-  if (emptyEl) emptyEl.hidden = state.events.length > 0 || processing;
+  if (emptyEl) emptyEl.hidden = state.events.length > 0 || processing || Boolean(recordedVideoUrl);
 
   const loadingRow =
     state.waitingNav
@@ -291,7 +446,6 @@ function render(state: CaptureState) {
       </li>`
       : "";
 
-  // Render Image 4 Step Cards with Scribe Orange Click Circles
   feedEl.innerHTML =
     state.events
       .map((e, i) => {
@@ -330,7 +484,6 @@ function render(state: CaptureState) {
       })
       .join("") + loadingRow;
 
-  // Add click handlers to step delete buttons
   const deleteBtns = feedEl.querySelectorAll<HTMLButtonElement>("[data-undo-step]");
   deleteBtns.forEach((btn) => {
     btn.onclick = (ev) => {
@@ -360,19 +513,45 @@ function apiBase() {
 btnNewCapture.onclick = () => openOptions();
 if (btnCancelOptions) btnCancelOptions.onclick = () => closeOptions();
 
+if (btnLaunchDesktopRec) {
+  btnLaunchDesktopRec.onclick = () => openOptions("screen");
+}
+
+if (btnDownloadVideo) {
+  btnDownloadVideo.onclick = () => {
+    if (!recordedVideoUrl) return;
+    const a = document.createElement("a");
+    a.href = recordedVideoUrl;
+    a.download = `readyscribe-recording-${Date.now()}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+}
+
 // Fixed bottom toolbar handlers
 footerPauseBtn.onclick = () => {
   chrome.runtime.sendMessage({ type: "GET_STATE" }, (res) => {
     if (res?.state?.status === "paused") {
+      if (screenRecorder.isRecording()) screenRecorder.resume();
       send({ type: "RESUME_CAPTURE" });
     } else {
+      if (screenRecorder.isRecording()) screenRecorder.pause();
       send({ type: "PAUSE_CAPTURE" });
     }
   });
 };
 
+if (footerMicBtn) {
+  footerMicBtn.onclick = () => {
+    const active = screenRecorder.toggleMic();
+    updateMicUI(active);
+    chrome.runtime.sendMessage({ type: "SET_MIC_ENABLED", enabled: active });
+  };
+}
+
 footerUndoBtn.onclick = () => send({ type: "UNDO_LAST" });
-footerCompleteBtn.onclick = () => send({ type: "STOP_CAPTURE" });
+footerCompleteBtn.onclick = () => void stopAllRecording();
 
 if (closePanelBtn) {
   closePanelBtn.onclick = () => {
@@ -383,7 +562,7 @@ if (closePanelBtn) {
 if (btnPause) btnPause.onclick = () => send({ type: "PAUSE_CAPTURE" });
 if (btnResume) btnResume.onclick = () => send({ type: "RESUME_CAPTURE" });
 if (btnUndo) btnUndo.onclick = () => send({ type: "UNDO_LAST" });
-if (btnStop) btnStop.onclick = () => send({ type: "STOP_CAPTURE" });
+if (btnStop) btnStop.onclick = () => void stopAllRecording();
 
 btnSignIn.onclick = () => {
   chrome.tabs.create({ url: `${apiBase()}/login` });

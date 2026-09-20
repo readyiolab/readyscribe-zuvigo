@@ -9,6 +9,9 @@ export type CaptureStatus =
   | "completed"
   | "failed";
 
+export type RecordingSource = "screen" | "window" | "tab";
+export type RecordingMode = "guide" | "video" | "both";
+
 export type ExtMessage =
   | { type: "START_CAPTURE"; tabId: number; workspaceId: string; apiBase: string }
   | {
@@ -17,6 +20,10 @@ export type ExtMessage =
       workspaceId?: string;
       apiBase: string;
       createNewTab?: boolean;
+      captureSource?: RecordingSource;
+      recordingMode?: RecordingMode;
+      includeMic?: boolean;
+      includeSystemAudio?: boolean;
     }
   | { type: "PAUSE_CAPTURE" }
   | { type: "RESUME_CAPTURE" }
@@ -31,7 +38,10 @@ export type ExtMessage =
   | { type: "NAV_PENDING"; parentClientEventId: string; fromUrl: string }
   | { type: "SET_WAITING"; waiting: boolean }
   | { type: "TAB_LOAD_STATUS"; status: "loading" | "complete" }
-  | { type: "PING" };
+  | { type: "PING" }
+  | { type: "SET_ACTIVE_TAB"; tabId: number; title?: string; url?: string }
+  | { type: "SCREEN_RECORDING_READY"; videoBlobUrl: string }
+  | { type: "SET_MIC_ENABLED"; enabled: boolean };
 
 export interface HighlightBox {
   /** Normalized 0–1 relative to viewport (matches captureVisibleTab). */
@@ -82,6 +92,12 @@ export interface CaptureState {
   /** Focusing/loading a tab before capture starts (Capture Options flow). */
   openingTab: boolean;
   openingMessage: string | null;
+  captureSource?: RecordingSource;
+  recordingMode?: RecordingMode;
+  isMicEnabled?: boolean;
+  isSystemAudioEnabled?: boolean;
+  videoBlobUrl?: string | null;
+  activeTabTitle?: string | null;
 }
 
 export const DEFAULT_STATE: CaptureState = {
@@ -102,6 +118,12 @@ export const DEFAULT_STATE: CaptureState = {
   waitingNav: false,
   openingTab: false,
   openingMessage: null,
+  captureSource: "tab",
+  recordingMode: "guide",
+  isMicEnabled: false,
+  isSystemAudioEnabled: false,
+  videoBlobUrl: null,
+  activeTabTitle: null,
 };
 
 const PASSWORD_NAME_RE =

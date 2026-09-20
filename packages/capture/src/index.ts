@@ -356,6 +356,22 @@ export function groupEventsIntoSteps(events: NormalizedEvent[]): HeuristicStep[]
         i = children.end;
         break;
       }
+      case CaptureEventType.TAB_CHANGE: {
+        const tabTitle = ev.metadata?.title as string | undefined;
+        steps.push({
+          title: tabTitle ? `Switch to tab: ${tabTitle}` : "Switch browser tab",
+          description: tabTitle
+            ? `Switch to the "${tabTitle}" tab.`
+            : ev.url
+              ? `Switch to tab ${ev.url}.`
+              : "Switch to the other browser tab.",
+          assetClientId: ev.assetClientId,
+          annotations: [],
+          sourceEventIds: [ev.clientEventId],
+        });
+        i += 1;
+        break;
+      }
       case CaptureEventType.CUSTOM: {
         // Orphan result without parent — treat as informational step
         const resultText =

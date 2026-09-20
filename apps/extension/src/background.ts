@@ -4,6 +4,8 @@ import {
   type ExtMessage,
   type BufferedEvent,
   type WorkspaceOption,
+  type RecordingSource,
+  type RecordingMode,
 } from "./shared";
 
 const DB_NAME = "zuvigo-capture";
@@ -99,6 +101,11 @@ async function persistState() {
       waitingNav: slim.waitingNav,
       openingTab: slim.openingTab,
       openingMessage: slim.openingMessage,
+      captureSource: slim.captureSource,
+      recordingMode: slim.recordingMode,
+      isMicEnabled: slim.isMicEnabled,
+      isSystemAudioEnabled: slim.isSystemAudioEnabled,
+      activeTabTitle: slim.activeTabTitle,
       eventCount: state.events.length,
     },
   });
@@ -444,7 +451,6 @@ async function ensureScreenshotPermission(): Promise<boolean> {
 }
 
 async function captureRecordedTab(): Promise<string | null> {
-  if (!state.tabId) return null;
   const ok = await ensureScreenshotPermission();
   if (!ok) {
     state.lastError =
@@ -452,15 +458,32 @@ async function captureRecordedTab(): Promise<string | null> {
     return null;
   }
 
-  const tab = await chrome.tabs.get(state.tabId);
-  if (tab.windowId == null) return null;
-
-  if (!tab.active) {
-    await chrome.tabs.update(state.tabId, { active: true });
-    await new Promise((r) => setTimeout(r, 120));
+  let targetWindowId: number | null = null;
+  try {
+    const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (activeTab?.id != null && activeTab.windowId != null) {
+      targetWindowId = activeTab.windowId;
+      if (state.tabId !== activeTab.id) {
+        state.tabId = activeTab.id;
+        state.activeTabTitle = activeTab.title ?? null;
+      }
+    }
+  } catch {
+    // Ignore query failure
   }
 
-  return chrome.tabs.captureVisibleTab(tab.windowId, {
+  if (targetWindowId == null && state.tabId) {
+    try {
+      const tab = await chrome.tabs.get(state.tabId);
+      targetWindowId = tab.windowId;
+    } catch {
+      // Tab may have closed
+    }
+  }
+
+  if (targetWindowId == null) return null;
+
+  return chrome.tabs.captureVisibleTab(targetWindowId, {
     format: "jpeg",
     quality: 85,
   });
@@ -574,7 +597,16 @@ async function beginCaptureOnTab(opts: {
   workspaceId?: string;
   apiBase: string;
   createNewTab?: boolean;
+  captureSource?: RecordingSource;
+  recordingMode?: RecordingMode;
+  includeMic?: boolean;
+  includeSystemAudio?: boolean;
 }) {
+  state.captureSource = opts.captureSource ?? "tab";
+  state.recordingMode = opts.recordingMode ?? "guide";
+  state.isMicEnabled = Boolean(opts.includeMic);
+  state.isSystemAudioEnabled = Boolean(opts.includeSystemAudio);
+  state.videoBlobUrl = null;
   state.openingTab = true;
   state.openingMessage = opts.createNewTab ? "Opening tab…" : "Opening tab…";
   state.lastError = null;
@@ -806,8 +838,67 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (state.tabId !== tabId || state.status !== "capturing") return;
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  if (state.status !== "capturing") return;
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    if (!tab || !tab.url) return;
+
+    const oldTabId = state.tabId;
+    state.tabId = activeInfo.tabId;
+    state.activeTabTitle = tab.title ?? null;
+
+    const isWebUrl = /^https?:\/\//i.test(tab.url);
+    if (isWebUrl) {
+      await chrome.tabs.sendMessage(activeInfo.tabId, { type: "KEEP_CAPTURE_ACTIVE" }).catch(async () => {
+        await chrome.scripting
+          .executeScript({ target: { tabId: activeInfo.tabId }, files: ["content.js"] })
+          .catch(() => {});
+        await chrome.tabs.sendMessage(activeInfo.tabId, { type: "KEEP_CAPTURE_ACTIVE" }).catch(() => {});
+      });
+    }
+
+    await persistState();
+    broadcast();
+
+    // If user switched to another web tab, capture TAB_CHANGE event
+    if (oldTabId && oldTabId !== activeInfo.tabId && isWebUrl) {
+      const clientEventId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const ev: BufferedEvent = {
+        clientEventId,
+        sequence: 0,
+        type: "TAB_CHANGE",
+        timestamp: Date.now(),
+        url: tab.url,
+        metadata: {
+          title: tab.title || "Browser Tab",
+          url: tab.url,
+          fromTabId: oldTabId,
+          toTabId: activeInfo.tabId,
+        },
+        assetClientId: `asset-${clientEventId}`,
+      };
+      await enqueueEvent(ev, true);
+    }
+  } catch {
+    // Ignore tab access errors (internal tabs, etc.)
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (state.status !== "capturing") return;
+
+  // If a tab completes loading, ensure content script is injected and active
+  if (changeInfo.status === "complete" && tab.url && /^https?:\/\//i.test(tab.url)) {
+    chrome.tabs.sendMessage(tabId, { type: "KEEP_CAPTURE_ACTIVE" }).catch(async () => {
+      await chrome.scripting
+        .executeScript({ target: { tabId }, files: ["content.js"] })
+        .catch(() => {});
+      await chrome.tabs.sendMessage(tabId, { type: "KEEP_CAPTURE_ACTIVE" }).catch(() => {});
+    });
+  }
+
+  if (state.tabId !== tabId) return;
   if (changeInfo.status === "loading" && pendingNav) {
     state.waitingNav = true;
     broadcast();
@@ -846,8 +937,31 @@ chrome.runtime.onMessage.addListener((message: ExtMessage, _sender, sendResponse
           workspaceId: message.workspaceId,
           apiBase: message.apiBase,
           createNewTab: message.createNewTab,
+          captureSource: message.captureSource,
+          recordingMode: message.recordingMode,
+          includeMic: message.includeMic,
+          includeSystemAudio: message.includeSystemAudio,
         });
         sendResponse({ type: "STATE", state });
+        break;
+      case "SET_ACTIVE_TAB":
+        state.tabId = message.tabId;
+        if (message.title) state.activeTabTitle = message.title;
+        await persistState();
+        broadcast();
+        sendResponse({ ok: true });
+        break;
+      case "SCREEN_RECORDING_READY":
+        state.videoBlobUrl = message.videoBlobUrl;
+        await persistState();
+        broadcast();
+        sendResponse({ ok: true });
+        break;
+      case "SET_MIC_ENABLED":
+        state.isMicEnabled = message.enabled;
+        await persistState();
+        broadcast();
+        sendResponse({ ok: true });
         break;
       case "PAUSE_CAPTURE":
         if (state.status !== "capturing") {

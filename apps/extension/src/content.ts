@@ -406,12 +406,32 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-chrome.runtime.sendMessage({ type: "GET_STATE" } satisfies ExtMessage, (res) => {
-  if (res?.type === "STATE" && res.state.status === "capturing") {
-    active = true;
-    lastUrl = location.href;
+function syncState() {
+  chrome.runtime.sendMessage({ type: "GET_STATE" } satisfies ExtMessage, (res) => {
+    if (chrome.runtime.lastError) return;
+    if (res?.type === "STATE") {
+      if (res.state.status === "capturing") {
+        active = true;
+        lastUrl = location.href;
+      } else if (
+        res.state.status === "paused" ||
+        res.state.status === "idle" ||
+        res.state.status === "completed"
+      ) {
+        active = false;
+      }
+    }
+  });
+}
+
+window.addEventListener("focus", syncState);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    syncState();
   }
 });
+
+syncState();
 
 document.addEventListener("click", onClick, true);
 document.addEventListener("input", onInput, true);

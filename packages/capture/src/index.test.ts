@@ -189,4 +189,25 @@ describe("groupEventsIntoSteps", () => {
     expect(steps[0]?.title).toContain("continue");
     expect(steps[0]?.assetClientId).toBe("asset-click");
   });
+
+  it("handles TAB_CHANGE event cleanly as a workflow step", () => {
+    const steps = groupEventsIntoSteps([
+      {
+        clientEventId: "tab-1",
+        sequence: 1,
+        type: CaptureEventType.TAB_CHANGE,
+        timestamp: 1000,
+        url: "https://app.example.com/settings",
+        metadata: {
+          title: "Account Settings",
+          url: "https://app.example.com/settings",
+        },
+        assetClientId: "asset-tab-1",
+      },
+    ]);
+    expect(steps).toHaveLength(1);
+    expect(steps[0]?.title).toBe("Switch to tab: Account Settings");
+    expect(steps[0]?.description).toBe('Switch to the "Account Settings" tab.');
+    expect(steps[0]?.assetClientId).toBe("asset-tab-1");
+  });
 });
