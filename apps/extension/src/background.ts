@@ -767,6 +767,23 @@ async function startCapture(tabId: number, workspaceId: string, apiBase: string)
     broadcast();
 
     if (isWebUrl && tabId) {
+      if (sourceUrl) {
+        const clientEventId = `init-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        const ev: BufferedEvent = {
+          clientEventId,
+          sequence: 0,
+          type: "PAGE_LOAD",
+          timestamp: Date.now(),
+          url: sourceUrl,
+          metadata: {
+            title: (await chrome.tabs.get(tabId).catch(() => null))?.title || "Page",
+            url: sourceUrl,
+          },
+          assetClientId: `asset-${clientEventId}`,
+        };
+        await enqueueEvent(ev, true);
+      }
+
       await chrome.tabs.sendMessage(tabId, { type: "START_CAPTURE" }).catch(async () => {
         try {
           await chrome.scripting.executeScript({
@@ -831,6 +848,19 @@ async function stopCapture() {
     while (state.uploadQueue.length || isFlushing) {
       await flushEvents();
       if (isFlushing) await new Promise((r) => setTimeout(r, 40));
+    }
+
+    // Check if any events were ever recorded
+    if (state.sequence === 0 && state.events.length === 0) {
+      state.status = "idle";
+      state.captureSessionId = null;
+      state.uploadQueue = [];
+      state.lastError = state.videoBlobUrl
+        ? null
+        : "No steps were recorded. Click on elements in a web page to capture steps.";
+      await persistState();
+      broadcast();
+      return;
     }
 
     await api(`/api/v1/captures/${state.captureSessionId}/complete`, {
