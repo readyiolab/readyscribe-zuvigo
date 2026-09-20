@@ -17,6 +17,7 @@ import { CaptureEventType } from "@zuvigo/types";
 
 const config = loadConfig();
 const log = createLogger({ name: "worker", level: config.LOG_LEVEL });
+log.info({ redisUrl: config.REDIS_URL.replace(/:[^:@]+@/, ":***@") }, "Worker connecting to Redis");
 const connection = createRedisConnection(config.REDIS_URL);
 const storage = createStorageService(config);
 const ai = createAIService(config);
