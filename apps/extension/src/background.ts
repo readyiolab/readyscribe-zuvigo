@@ -165,24 +165,37 @@ async function getExtensionToken(): Promise<string | null> {
 }
 
 async function api(path: string, init?: RequestInit) {
-  const cookies = await chrome.cookies.getAll({ url: state.apiBase });
-  const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-  const bearer = await getExtensionToken();
-  const res = await fetch(`${state.apiBase}${path}`, {
-    ...init,
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
-      ...(init?.headers ?? {}),
-    },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+  let cookieHeader = "";
+  try {
+    const cookies = await chrome.cookies.getAll({ url: state.apiBase });
+    cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+  } catch {
+    // ignore
   }
-  return res.json();
+  const bearer = await getExtensionToken();
+  try {
+    const res = await fetch(`${state.apiBase}${path}`, {
+      ...init,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+        ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+        ...(init?.headers ?? {}),
+      },
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`API ${res.status}: ${body.slice(0, 300)}`);
+    }
+    return res.json();
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (msg.includes("Failed to fetch")) {
+      throw new Error(`Cannot reach API at ${state.apiBase}. Verify server is running.`);
+    }
+    throw err;
+  }
 }
 
 async function connectExtension(apiBase: string) {
@@ -394,18 +407,48 @@ async function flushEvents() {
 async function uploadScreenshotForSession(sessionId: string, ev: BufferedEvent) {
   if (!ev.screenshotDataUrl || !ev.assetClientId) return;
   if (ev.screenshotDataUrl === "[inline]") return;
-  const blob = await (await fetch(ev.screenshotDataUrl)).blob();
-  const mimeType = blob.type === "image/png" ? "image/png" : "image/webp";
-  const signed = await api(`/api/v1/captures/${sessionId}/assets/sign`, {
-    method: "POST",
-    body: JSON.stringify({
-      clientAssetId: ev.assetClientId,
-      mimeType,
-      byteSize: blob.size,
-    }),
-  });
 
-  if (String(signed.uploadUrl).startsWith("memory://")) {
+  try {
+    const blob = await (await fetch(ev.screenshotDataUrl)).blob();
+    const mimeType =
+      blob.type === "image/jpeg"
+        ? "image/jpeg"
+        : blob.type === "image/png"
+          ? "image/png"
+          : "image/webp";
+
+    const signed = await api(`/api/v1/captures/${sessionId}/assets/sign`, {
+      method: "POST",
+      body: JSON.stringify({
+        clientAssetId: ev.assetClientId,
+        mimeType,
+        byteSize: blob.size,
+      }),
+    });
+
+    if (String(signed.uploadUrl).startsWith("memory://")) {
+      await api(`/api/v1/captures/${sessionId}/assets`, {
+        method: "POST",
+        body: JSON.stringify({
+          clientAssetId: ev.assetClientId,
+          assetId: signed.assetId,
+          byteSize: blob.size,
+        }),
+      });
+      return;
+    }
+
+    const uploadRes = await fetch(signed.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": mimeType },
+      body: blob,
+    });
+
+    if (!uploadRes.ok) {
+      console.warn(`[storage] Pre-signed S3 PUT failed with HTTP status ${uploadRes.status}`);
+      return;
+    }
+
     await api(`/api/v1/captures/${sessionId}/assets`, {
       method: "POST",
       body: JSON.stringify({
@@ -414,23 +457,9 @@ async function uploadScreenshotForSession(sessionId: string, ev: BufferedEvent) 
         byteSize: blob.size,
       }),
     });
-    return;
+  } catch (err) {
+    console.warn("[storage] Could not upload screenshot asset, proceeding with guide steps:", err);
   }
-
-  await fetch(signed.uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": mimeType },
-    body: blob,
-  });
-
-  await api(`/api/v1/captures/${sessionId}/assets`, {
-    method: "POST",
-    body: JSON.stringify({
-      clientAssetId: ev.assetClientId,
-      assetId: signed.assetId,
-      byteSize: blob.size,
-    }),
-  });
 }
 
 async function uploadScreenshot(ev: BufferedEvent) {
